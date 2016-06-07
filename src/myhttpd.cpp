@@ -63,7 +63,7 @@ const std::string get_ip(struct sockaddr_in * ci) {
 
 /*
  * Helper method gets a list of all files (hidden ignored) in a given directory
- * and returns it in HTML format
+ * and returns it in HTML format. If directory doesn't exist returns NULL
  */
 std::string get_dir_listing(const char * dir_name) {
     std::stringstream listing;
@@ -85,13 +85,19 @@ std::string get_dir_listing(const char * dir_name) {
     return NULL;
 }
 
-/* Helper method substitutes ~ with current user's home directory path + /myhttpd */
+/*
+ * Helper method substitutes ~ with current user's home directory path + /myhttpd
+ * If requested path doesn't start with ~ then appends server's root directory to it
+ */
 void normalize_path(std::string * path) {
     if ((*path)[0] == '~') {
         path->erase(0, 1);
         if ((*path)[0] != '/') path->insert(0, "/");
         path->insert(0, "/myhttpd");
         path->insert(0, getpwuid(getuid())->pw_dir);
+    }
+    else {
+        path->insert(0, serv_params.root_dir);
     }
 }
 
@@ -165,14 +171,14 @@ int main(int argc, char * argv[]) {
     /* Creating a socket */
     if ((socket_fd = socket(socket_info->ai_family, socket_info->ai_socktype, socket_info->ai_protocol)) == -1)
         pr_error("error while creating socket");
-    /* Set options of the socket */
+    /* Set REUSEPORT option so no waiting time for the kernel to release that port */
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &y, socket_info->ai_addrlen) == -1)
-        pr_error("failed setting socket options");
-    /* Binding the socket to a port */
+        pr_error("failed setting socket option");
+    /* Binding socket to the port */
     if ((bind(socket_fd, socket_info->ai_addr, socket_info->ai_addrlen)) == -1)
         pr_error("cannot associate socket with given port");
-    /* Openning the port on localhost */
-    if ((listen(socket_fd, 5)) == -1)
+    /* Openning the port on localhost. SOMAXCONN defines queue length of completely established sockets */
+    if ((listen(socket_fd, SOMAXCONN)) == -1)
         pr_error("cannot open the port");
 
     if (serv_params.debugging) {
@@ -191,7 +197,7 @@ int main(int argc, char * argv[]) {
             const char * msg = "\nWelcome to myhttpd v.0.0.1\n\n";
             send(con_fd, msg, strlen(msg), 0);
             recv(con_fd, buffer, sizeof(buffer), 0);
-            strtok(buffer, "\n\t");
+            // strtok(buffer, "\n\t");
             std::cout << buffer << std::endl;
             close(con_fd);
         }
