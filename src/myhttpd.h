@@ -82,7 +82,7 @@ struct http_request {
 
 struct http_response {
     unsigned int content_length = 0;
-    std::string header, conteçnt_type;
+    std::string header, content_type;
     char * content;
     time_t mod_time;
     int req_status;
