@@ -1,3 +1,6 @@
+#ifndef MYHTTPD_H
+#define MYHTTPD_H
+
 #include <iostream>
 #include <thread>
 #include <sstream>      // stringstream
@@ -24,7 +27,6 @@
 #define SERVER_DEFAULT_FCFS                 true
 #define SERVER_DEFAULT_DEBUGGING            false
 #define SERVER_INDEX_FILE                   "index.html"
-
 
 /* Limits for 1st line */
 #define HEAD_LINE_LENGTH                    1040
@@ -54,6 +56,7 @@
 #define HTTP_STATUS_CODE_BAD_REQUEST_S      "400 Bad Request"
 #define HTTP_STATUS_CODE_NOTFOUND_S         "404 Not Found"
 
+/* Supported MIME types */
 #define TYPE_MIME_IMAGE_JPEG                "image/jpeg"
 #define TYPE_MIME_TEXT_HTML                 "text/html"
 
@@ -79,7 +82,8 @@ struct http_request {
 
 struct http_response {
     unsigned int content_length = 0;
-    std::string header, content_type, content;
+    std::string header, conteçnt_type;
+    char * content;
     time_t mod_time;
     int req_status;
 };
@@ -89,3 +93,24 @@ enum extension {
     JPEG,
     UNKNOWN
 };
+
+
+void print_usage(const char *);
+void pr_error(const char *);
+void parse_args(int, char *);
+void create_socket_open_port();
+const std::string get_time_for_logging(time_t);
+const std::string get_time_in_gmt(time_t);
+const std::string get_ip(struct sockaddr_in *);
+void print_debugging_message();
+int get_method_as_int(const char *);
+const char * get_status_as_string(int);
+std::string normalize_path(char const *);
+void build_response_header(http_response &);
+void scheduling_thread();
+off_t get_filesize(std::string *);
+extension get_file_extension(const char *);
+void get_file_content(http_request *, http_response &);
+
+
+#endif

@@ -23,12 +23,6 @@ void print_usage(const char * exec) {
     exit(0);
 }
 
-/* Helper method to print errno to stderr */
-void pr_error(const char * msg) {
-    perror(msg);
-    exit(1);
-}
-
 /* Helper method to parse command line arguments */
 void parse_args(int ac, char * av[]) {
     const char * exec_name = av[0];
@@ -85,6 +79,12 @@ void parse_args(int ac, char * av[]) {
     }
 }
 
+/* Helper method to print errno to stderr */
+void pr_error(const char * msg) {
+    perror(msg);
+    exit(1);
+}
+
 void create_socket_open_port() {
     /* Filling up socket_init_info with initial information */
     memset(&socket_init_info, 0, sizeof(socket_init_info));                 // Emptying the structure
@@ -108,29 +108,6 @@ void create_socket_open_port() {
         pr_error("cannot open the port");
 }
 
-/*
- * Helper method to convert UNIX timestamp to required time format for logging.
- * With no argument given returns current date and time.
- */
-const std::string get_time_for_logging(time_t stamp=time(0)) {
-    char t[50];
-    strftime(t, sizeof(t), "%d/%b/%Y:%X %z", localtime(&stamp));
-    return t;
-}
-// Date: Sat, 11 Jun 2016 18:13:02 GMT
-const std::string get_time_in_gmt(time_t stamp=time(0)) {
-    char t[50];
-    strftime(t, sizeof(t), "%a, %d %h %Y %T GMT", gmtime(&stamp));
-    return t;
-}
-
-/* Helper method to extract IP address as a string from sockaddr_in structure */
-const std::string get_ip(struct sockaddr_in * ci) {
-    char str_ip[INET_ADDRSTRLEN];
-    inet_ntop(ci->sin_family, &(ci->sin_addr), str_ip, sizeof str_ip);
-    return str_ip;
-}
-
 /* Helper method prints debugging message and queuing counter to standart output */
 void print_debugging_message() {
     std::cout   << "\n* Debugging mode.\n* Waiting for incoming connections at "
@@ -145,26 +122,27 @@ void print_debugging_message() {
 }
 
 /*
- * Helper method gets a list of all files (hidden ignored) in a given directory
- * and returns it in HTML format. If directory doesn't exist returns NULL
+ * Helper method to convert UNIX timestamp to required time format for logging.
+ * With no argument given returns current date and time.
  */
-std::string get_dir_listing(const char * dir_name) {
-    std::stringstream listing;
-    int dir;
-    struct dirent **item;
-    if ((dir = scandir(dir_name, &item, NULL, alphasort)) != 0) {
-        listing << HTMLOPEN << "<h2>Listing of " << dir_name << ":</h2><br>\n";
-        for(int i=0; i<dir; i++) {
-            if (item[i]->d_name[0] != '.') {
-                listing << item[i]->d_name << "<br>\n";
-            }
-            free(item[i]);
-        }
-        free(item);
-        listing << HTMLCLOSE;
-        return listing.str();
-    }
-    return NULL;
+const std::string get_time_for_logging(time_t stamp=time(0)) {
+    char t[50];
+    strftime(t, sizeof(t), "%d/%b/%Y:%X %z", localtime(&stamp));
+    return t;
+}
+
+ /* Helper method to convert UNIX timestamp to GMT time */
+const std::string get_time_in_gmt(time_t stamp=time(0)) {
+    char t[50];
+    strftime(t, sizeof(t), "%a, %d %h %Y %T GMT", gmtime(&stamp));
+    return t;
+}
+
+/* Helper method to extract IP address as a string from sockaddr_in structure */
+const std::string get_ip(struct sockaddr_in * ci) {
+    char str_ip[INET_ADDRSTRLEN];
+    inet_ntop(ci->sin_family, &(ci->sin_addr), str_ip, sizeof str_ip);
+    return str_ip;
 }
 
 /* Helper method returns request type as integer */
@@ -174,6 +152,16 @@ int get_method_as_int(const char * method) {
     else if (strcmp(method, HTTP_REQUEST_HEAD_S) == 0)
         return HTTP_REQUEST_HEAD;
     else return -1;
+}
+
+const char * get_status_as_string(int code) {
+    switch (code) {
+        case HTTP_STATUS_CODE_OK:
+            return HTTP_STATUS_CODE_OK_S;
+        case HTTP_STATUS_CODE_NOTFOUND:
+            return HTTP_STATUS_CODE_NOTFOUND_S;
+    }
+    return HTTP_STATUS_CODE_BAD_REQUEST_S;
 }
 
 /*
@@ -215,33 +203,11 @@ off_t get_filesize(std::string * norm_path) {
 }
 
 extension get_file_extension(const char * path) {
-    int dot_pos = strlen(path);
-    for (int i=dot_pos-1; i > 0; --i) {
-        if (path[i] == '.') {
-            dot_pos = i + 1;
-            break;
-        }
-        if (path[i] == '/') return UNKNOWN;
-    }
-    char tmp[] = {};
-    strcpy(tmp, &path[dot_pos]);
-    for (int i=0; i < strlen(tmp); i++)
-        tmp[i] = tolower(tmp[i]);
-    if (!strcmp(tmp, "html") || !strcmp(tmp, "htm"))
+    if (strcasestr(path, "html") || strcasestr(path, "htm"))
         return HTML;
-    if (!strcmp(tmp, "jpeg") || !strcmp(tmp, "jpg"))
+    if (strcasestr(path, "jpg") || strcasestr(path, "jpeg"))
         return JPEG;
     return UNKNOWN;
-}
-
-const char * get_status_as_string(int code) {
-    switch (code) {
-        case HTTP_STATUS_CODE_OK:
-            return HTTP_STATUS_CODE_OK_S;
-        case HTTP_STATUS_CODE_NOTFOUND:
-            return HTTP_STATUS_CODE_NOTFOUND_S;
-    }
-    return HTTP_STATUS_CODE_BAD_REQUEST_S;
 }
 
 void build_response_header(http_response & resp) {
@@ -253,7 +219,7 @@ void build_response_header(http_response & resp) {
         header << "Last-Modified: " << get_time_in_gmt(resp.mod_time) << '\n';
     if (!resp.content_type.empty())
         header << "Content-Type: " << resp.content_type << '\n';
-    if (!resp.content.empty())
+    if (resp.content_length)
         header << "Content-Length: " << resp.content_length << '\n';
     header << '\n';
     resp.header = header.str();
@@ -270,12 +236,26 @@ void get_file_content(http_request *req, http_response &resp) {
             resp.req_status = HTTP_STATUS_CODE_NOTFOUND;
             return;
         }
-        /* Is openned file a directory? */
+        /* If openned file is a directory then get list of files*/
         if (S_ISDIR(f_info.st_mode)) {
             if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
-                resp.content = get_dir_listing(req->norm_path.c_str());
+                std::stringstream listing;
+                int dir;
+                struct dirent **item;
+                dir = scandir(req->norm_path.c_str(), &item, NULL, alphasort);
+                listing << HTMLOPEN << "<h2>Listing of " << req->page << ":</h2><br>\n";
+                for(int i=0; i<dir; i++) {
+                    if (item[i]->d_name[0] != '.') {
+                        listing << item[i]->d_name << "<br>\n";
+                    }
+                    free(item[i]);
+                }
+                free(item);
+                listing << HTMLCLOSE;
+                resp.content_length = listing.str().length();
+                resp.content = new char[resp.content_length];
+                strcpy(resp.content, listing.str().c_str());
                 resp.content_type = TYPE_MIME_TEXT_HTML;
-                resp.content_length = resp.content.length();
             }
             resp.req_status = HTTP_STATUS_CODE_OK;
             resp.mod_time = f_info.st_mtimespec.tv_sec;
@@ -289,22 +269,23 @@ void get_file_content(http_request *req, http_response &resp) {
                         // cannot open
                     }
                     if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
-                        ss << in_f.rdbuf();
-                        resp.content = ss.str();
-                        resp.content_length = resp.content.length();
+                        resp.content = new char[f_info.st_size];
+                        in_f.read(resp.content, f_info.st_size);
+                        resp.content_length = f_info.st_size;
                     }
                     resp.content_type = TYPE_MIME_TEXT_HTML;
                     resp.req_status = HTTP_STATUS_CODE_OK;
                     resp.mod_time = f_info.st_mtimespec.tv_sec;
                     break;
                 case JPEG:
-                    in_f.open(req->norm_path);
+                    in_f.open(req->norm_path, std::ios::binary);
                     if (!in_f.is_open()) {
                         // cannot open
                     }
                     if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
-                        // TODO <<< get content >>>
-                        resp.content_length = resp.content.length();
+                        resp.content = new char[f_info.st_size];
+                        in_f.read(resp.content, f_info.st_size);
+                        resp.content_length = f_info.st_size;
                     }
                     resp.content_type = TYPE_MIME_IMAGE_JPEG;
                     resp.req_status = HTTP_STATUS_CODE_OK;
@@ -312,12 +293,12 @@ void get_file_content(http_request *req, http_response &resp) {
                     break;
                 default:
                     resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
+            in_f.close();
             }
         }
     }
     /* Path is an empty string */
     else resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
-    in_f.close();
 }
 
 void logging(http_request * req, http_response & resp) {
@@ -355,8 +336,9 @@ void scheduling_thread() {
             build_response_header(resp);
             logging(req, resp);
             send(con_fd, resp.header.c_str(), strlen(resp.header.c_str()), 0);
-            if (!resp.content.empty()) {
-                send(con_fd, resp.content.c_str(), strlen(resp.content.c_str()), 0);
+            if (resp.content_length) {
+                send(con_fd, resp.content, resp.content_length, 0);
+                delete [] resp.content;
             }
             close(req->con_fd);
             delete req;
