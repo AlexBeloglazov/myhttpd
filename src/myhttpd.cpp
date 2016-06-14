@@ -6,7 +6,7 @@ int socket_fd, con_fd, y = 1;
 struct addrinfo socket_init_info, *socket_info;
 struct sockaddr_in con_info;
 socklen_t con_socklen = sizeof(con_info);
-std::ofstream logfile;
+Log logging;
 std::queue<http_request *> request_queue;
 
 
@@ -39,9 +39,13 @@ void parse_args(int ac, char * av[]) {
                     print_usage(exec_name);
                     case 'l':
                     if (++i >= ac) print_usage(exec_name);
-                    logfile.open(av[i], std::ios::app);
-                    if (!logfile.is_open())
+                    try {
+                        logging.setlogfile(av[i]);
+                        serv_params.logfile = true;
+                    }
+                    catch (...) {
                         std::cout << "error: cannot open log file" << std::endl;
+                    }
                     break;
                     case 'p':
                     if (++i >= ac) print_usage(exec_name);
@@ -131,7 +135,7 @@ const std::string get_time_for_logging(time_t stamp=time(0)) {
     return t;
 }
 
- /* Helper method to convert UNIX timestamp to GMT time */
+ /* Helper method to convert UNIX timestamp to GMT time representation */
 const std::string get_time_in_gmt(time_t stamp=time(0)) {
     char t[50];
     strftime(t, sizeof(t), "%a, %d %h %Y %T GMT", gmtime(&stamp));
@@ -154,6 +158,7 @@ int get_method_as_int(const char * method) {
     else return -1;
 }
 
+/* Helper method returns request status as string */
 const char * get_status_as_string(int code) {
     switch (code) {
         case HTTP_STATUS_CODE_OK:
@@ -177,7 +182,7 @@ std::string normalize_path(char const * page) {
     }
     else if (!strlen(page) || page[0] != '/')
         return "";
-    else normalized.insert(0, SERVER_DEFAULT_ROOT_DIR);
+    else normalized.insert(0, serv_params.root_dir);
     return normalized;
 }
 
@@ -202,6 +207,7 @@ off_t get_filesize(std::string * norm_path) {
     return 0;
 }
 
+/* Helper method returns extension of a file provided through path argument */
 extension get_file_extension(const char * path) {
     if (strcasestr(path, "html") || strcasestr(path, "htm"))
         return HTML;
@@ -225,92 +231,105 @@ void build_response_header(http_response & resp) {
     resp.header = header.str();
 }
 
+/*
+ * Helper method fills up resp.content with content of requested file or with
+ * content of directory in HTML format.
+ */
 void get_file_content(http_request *req, http_response &resp) {
     struct stat f_info;
     std::ifstream in_f;
-    std::stringstream ss;
-    /* Check for path validity */
-    if (!req->norm_path.empty()) {
-        /* Does file exist? */
-        if (stat(req->norm_path.c_str(), &f_info)) {
-            resp.req_status = HTTP_STATUS_CODE_NOTFOUND;
-            return;
-        }
-        /* If openned file is a directory then get list of files*/
-        if (S_ISDIR(f_info.st_mode)) {
-            if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
-                std::stringstream listing;
-                int dir;
-                struct dirent **item;
-                dir = scandir(req->norm_path.c_str(), &item, NULL, alphasort);
-                listing << HTMLOPEN << "<h2>Listing of " << req->page << ":</h2><br>\n";
-                for(int i=0; i<dir; i++) {
-                    if (item[i]->d_name[0] != '.') {
-                        listing << item[i]->d_name << "<br>\n";
-                    }
-                    free(item[i]);
+    /* Check if path is an empty string */
+    if (req->norm_path.empty()) {
+        resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
+        return;
+    }
+    /* Get stat for a file */
+    stat(req->norm_path.c_str(), &f_info);
+    /* If openned file is a directory then get list of files*/
+    if (S_ISDIR(f_info.st_mode)) {
+        if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
+            std::stringstream listing;
+            int dir;
+            struct dirent **item;
+            dir = scandir(req->norm_path.c_str(), &item, NULL, alphasort);
+            listing << "<html>\n<head><title>Directory Listing</title></head>\n<body>\n"
+                    << "<h2>Listing of " << req->page << ":</h2><br>\n";
+            for(int i=0; i<dir; i++) {
+                if (item[i]->d_name[0] != '.') {
+                    listing << item[i]->d_name << "<br>\n";
                 }
-                free(item);
-                listing << HTMLCLOSE;
-                resp.content_length = listing.str().length();
-                resp.content = new char[resp.content_length];
-                strcpy(resp.content, listing.str().c_str());
-                resp.content_type = TYPE_MIME_TEXT_HTML;
+                free(item[i]);
             }
-            resp.req_status = HTTP_STATUS_CODE_OK;
-            resp.mod_time = f_info.st_mtimespec.tv_sec;
+            free(item);
+            listing << "</body>\n</html>\n";
+            resp.content_length = listing.str().length();
+            resp.content = new char[resp.content_length];
+            strcpy(resp.content, listing.str().c_str());
+            resp.content_type = TYPE_MIME_TEXT_HTML;
         }
-        /* Its a file */
-        else {
-            switch(get_file_extension(req->norm_path.c_str())){
-                case HTML:
-                    in_f.open(req->norm_path);
-                    if (!in_f.is_open()) {
-                        // cannot open
-                    }
-                    if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
-                        resp.content = new char[f_info.st_size];
-                        in_f.read(resp.content, f_info.st_size);
-                        resp.content_length = f_info.st_size;
-                    }
-                    resp.content_type = TYPE_MIME_TEXT_HTML;
-                    resp.req_status = HTTP_STATUS_CODE_OK;
-                    resp.mod_time = f_info.st_mtimespec.tv_sec;
-                    break;
-                case JPEG:
-                    in_f.open(req->norm_path, std::ios::binary);
-                    if (!in_f.is_open()) {
-                        // cannot open
-                    }
-                    if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
-                        resp.content = new char[f_info.st_size];
-                        in_f.read(resp.content, f_info.st_size);
-                        resp.content_length = f_info.st_size;
-                    }
-                    resp.content_type = TYPE_MIME_IMAGE_JPEG;
-                    resp.req_status = HTTP_STATUS_CODE_OK;
-                    resp.mod_time = f_info.st_mtimespec.tv_sec;
-                    break;
-                default:
-                    resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
-            in_f.close();
-            }
+        resp.req_status = HTTP_STATUS_CODE_OK;
+        resp.mod_time = f_info.st_mtimespec.tv_sec;
+    }
+    /* Its a file */
+    else if (S_ISREG(f_info.st_mode)){
+        switch(get_file_extension(req->norm_path.c_str())){
+            case HTML:
+                in_f.open(req->norm_path);
+                if (!in_f.is_open()) {
+                    // cannot open
+                }
+                if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
+                    resp.content = new char[f_info.st_size];
+                    in_f.read(resp.content, f_info.st_size);
+                    resp.content_length = f_info.st_size;
+                }
+                resp.content_type = TYPE_MIME_TEXT_HTML;
+                resp.req_status = HTTP_STATUS_CODE_OK;
+                resp.mod_time = f_info.st_mtimespec.tv_sec;
+                break;
+            case JPEG:
+                in_f.open(req->norm_path, std::ios::binary);
+                if (!in_f.is_open()) {
+                    // cannot open
+                }
+                if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
+                    resp.content = new char[f_info.st_size];
+                    in_f.read(resp.content, f_info.st_size);
+                    resp.content_length = f_info.st_size;
+                }
+                resp.content_type = TYPE_MIME_IMAGE_JPEG;
+                resp.req_status = HTTP_STATUS_CODE_OK;
+                resp.mod_time = f_info.st_mtimespec.tv_sec;
+                break;
+            default:
+                resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
+        in_f.close();
         }
     }
-    /* Path is an empty string */
-    else resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
+    else resp.req_status = HTTP_STATUS_CODE_NOTFOUND;
 }
 
-void logging(http_request * req, http_response & resp) {
-    if (serv_params.debugging || logfile.is_open()) {
+std::string get_logstring(http_request * req, http_response & resp) {
         std::stringstream out;
         out     << req->rem_ip << " ~ [" << get_time_for_logging(req->timestamp) << "] ["
                 << get_time_for_logging() << "] \"" << req->method << " " << req->page
                 << " " << req->http << "\" " << resp.req_status << " "
                 << resp.content_length << std::endl;
-        if (serv_params.debugging)
-            std::cout << out.str();
-        else logfile << out.str() << std::flush;
+        return out.str();
+}
+
+void Log::setlogfile(char * path) {
+    this->_logfile.open(path, std::ios::app);
+}
+
+void Log::doit(std::string log_str) {
+    if (serv_params.debugging) {
+        std::lock_guard<std::mutex> lg(this->m);
+        std::cout << log_str;
+    }
+    else if (serv_params.logfile) {
+        std::lock_guard<std::mutex> lg(this->m);
+        this->_logfile << log_str << std::flush;
     }
 }
 
@@ -321,6 +340,7 @@ void scheduling_thread() {
     while (true) {
         if (!request_queue.empty()) {
 
+            // This will be in a worker thread
             // ---------
             struct http_response resp;
             struct http_request * req = request_queue.front();
@@ -334,7 +354,7 @@ void scheduling_thread() {
                 resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
             }
             build_response_header(resp);
-            logging(req, resp);
+            logging.doit(get_logstring(req, resp));
             send(con_fd, resp.header.c_str(), strlen(resp.header.c_str()), 0);
             if (resp.content_length) {
                 send(con_fd, resp.content, resp.content_length, 0);
@@ -378,7 +398,7 @@ int main(int argc, char * argv[]) {
         strcpy(request->page, page);
         strcpy(request->http, http);
         strcpy(request->rem_ip, get_ip(&con_info).c_str());
-        /* Put request into the queue */
+        /* Put request object into the main queue */
         request_queue.push(request);
     }
 
