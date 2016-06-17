@@ -9,6 +9,16 @@ socklen_t con_socklen = sizeof(con_info);
 Log logging;
 std::queue<http_request *> request_queue;
 
+/* Turns caller process into daemon */
+void daemon_mode() {
+    int code;
+    if ((code=fork()) < 0) {
+        pr_error("daemon mode failed");
+    }
+    if (code != 0 ) exit(0);
+    setsid();
+    umask(0);
+}
 
 void print_usage(const char * exec) {
     std::cout   << "\nUSAGE: " << exec << " [Options]\n\n"
@@ -39,13 +49,7 @@ void parse_args(int ac, char * av[]) {
                     print_usage(exec_name);
                     case 'l':
                     if (++i >= ac) print_usage(exec_name);
-                    try {
-                        logging.setlogfile(av[i]);
-                        serv_params.logfile = true;
-                    }
-                    catch (...) {
-                        std::cout << "error: cannot open log file" << std::endl;
-                    }
+                    serv_params.logfile = av[i];
                     break;
                     case 'p':
                     if (++i >= ac) print_usage(exec_name);
@@ -101,7 +105,7 @@ void create_socket_open_port() {
     /* Creating a socket */
     if ((socket_fd = socket(socket_info->ai_family, socket_info->ai_socktype, socket_info->ai_protocol)) == -1)
         pr_error("error while creating socket");
-    /* Set REUSEPORT option so no waiting time for the kernel to release that port */
+    /* Set REUSEPORT option so the program can reuse the port after restart */
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &y, socket_info->ai_addrlen) == -1)
         pr_error("failed setting socket option");
     /* Binding socket to the port */
@@ -118,11 +122,11 @@ void print_debugging_message() {
                 << get_ip((sockaddr_in *)socket_info->ai_addr) << ":" << serv_params.port << "\n\n";
     int i = 0;
     while (i < serv_params.q_time) {
-        std::cout << "* Queuing time: " << i << " s" << '\r' << std::flush;
+        std::cout << "* Queuing time: " << i << "s / " << serv_params.q_time << "s" <<  '\r' << std::flush;
         sleep(1);
         i++;
     }
-    std::cout << "* Queuing time: " << i << " s" << "\n\n";
+    std::cout << "* Queuing time: " << i << "s / " << serv_params.q_time << "s" << "\n\n";
 }
 
 /*
@@ -182,7 +186,7 @@ std::string normalize_path(char const * page) {
     }
     else if (!strlen(page) || page[0] != '/')
         return "";
-    else normalized.insert(0, serv_params.root_dir);
+    else normalized.insert(0, ".");
     return normalized;
 }
 
@@ -245,7 +249,7 @@ void get_file_content(http_request *req, http_response &resp) {
     }
     /* Get stat for a file */
     stat(req->norm_path.c_str(), &f_info);
-    /* If openned file is a directory then get list of files*/
+    /* If file is a directory then get list of files*/
     if (S_ISDIR(f_info.st_mode)) {
         if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
             std::stringstream listing;
@@ -276,7 +280,8 @@ void get_file_content(http_request *req, http_response &resp) {
             case HTML:
                 in_f.open(req->norm_path);
                 if (!in_f.is_open()) {
-                    // cannot open
+                    resp.req_status = HTTP_STATUS_CODE_NOTFOUND;
+                    break;
                 }
                 if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
                     resp.content = new char[f_info.st_size];
@@ -290,7 +295,8 @@ void get_file_content(http_request *req, http_response &resp) {
             case JPEG:
                 in_f.open(req->norm_path, std::ios::binary);
                 if (!in_f.is_open()) {
-                    // cannot open
+                    resp.req_status = HTTP_STATUS_CODE_NOTFOUND;
+                    break;
                 }
                 if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
                     resp.content = new char[f_info.st_size];
@@ -318,25 +324,21 @@ std::string get_logstring(http_request * req, http_response & resp) {
         return out.str();
 }
 
-void Log::setlogfile(char * path) {
+void Log::openlogfile(std::string path) {
     this->_logfile.open(path, std::ios::app);
 }
 
-void Log::doit(std::string log_str) {
-    if (serv_params.debugging) {
-        std::lock_guard<std::mutex> lg(this->m);
+void Log::execute(std::string log_str) {
+    std::lock_guard<std::mutex> lg(this->m);
+    if (serv_params.debugging)
         std::cout << log_str;
-    }
-    else if (serv_params.logfile) {
-        std::lock_guard<std::mutex> lg(this->m);
+    else if (this->_logfile.is_open())
         this->_logfile << log_str << std::flush;
-    }
 }
 
 void scheduling_thread() {
     if (serv_params.debugging) print_debugging_message();
     else sleep(serv_params.q_time);
-
     while (true) {
         if (!request_queue.empty()) {
 
@@ -354,29 +356,36 @@ void scheduling_thread() {
                 resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
             }
             build_response_header(resp);
-            logging.doit(get_logstring(req, resp));
             send(con_fd, resp.header.c_str(), strlen(resp.header.c_str()), 0);
             if (resp.content_length) {
                 send(con_fd, resp.content, resp.content_length, 0);
                 delete [] resp.content;
             }
+            logging.execute(get_logstring(req, resp));
             close(req->con_fd);
             delete req;
             // ----------
 
         }
-        sleep(1);
+        usleep(200);
     }
 }
 
-void * worker_thread(void * data) {
+void worker_thread(std::queue<http_request *> job) {
     // TODO
-    return NULL;
 }
 
 /* Queuing thread */
 int main(int argc, char * argv[]) {
     parse_args(argc, argv);
+    if (!serv_params.debugging) daemon_mode();
+    chdir(serv_params.root_dir.c_str());
+    if (!serv_params.logfile.empty()) {
+        try { logging.openlogfile(serv_params.logfile); }
+        catch (...) {
+        pr_error("failed open logfile");
+        }
+    }
     create_socket_open_port();
     /* Creating scheduling thread */
     std::thread scheduler(scheduling_thread);

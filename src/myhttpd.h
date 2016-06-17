@@ -22,7 +22,7 @@
 #define SERVER_INFO                         "myhttpd/0.0.1"
 #define SERVER_HTTP_PROTOCOL_VERSION        "HTTP/1.0"
 #define SERVER_DEFAULT_PORT                 "8080"
-#define SERVER_DEFAULT_ROOT_DIR             "."
+#define SERVER_DEFAULT_ROOT_DIR             ""
 #define SERVER_DEFAULT_Q_TIME               60
 #define SERVER_DEFAULT_N_THREADS            4
 #define SERVER_DEFAULT_FCFS                 true
@@ -57,20 +57,10 @@
 #define TYPE_MIME_IMAGE_JPEG                "image/jpeg"
 #define TYPE_MIME_TEXT_HTML                 "text/html"
 
-/* Class for thread-safe logging */
-class Log {
-public:
-    void doit(std::string);
-    void setlogfile(char *);
-private:
-    std::mutex m;
-    std::ofstream _logfile;
-};
-
 /* Structure holds default parameters of the server */
 static struct parameters {
-    bool logfile = false, debugging = SERVER_DEFAULT_DEBUGGING;
-    std::string port = SERVER_DEFAULT_PORT;
+    bool debugging = SERVER_DEFAULT_DEBUGGING;
+    std::string port = SERVER_DEFAULT_PORT, logfile;
     std::string root_dir = SERVER_DEFAULT_ROOT_DIR;
     int q_time = SERVER_DEFAULT_Q_TIME;
     int threads = SERVER_DEFAULT_N_THREADS;
@@ -94,6 +84,16 @@ struct http_response {
     int req_status;
 };
 
+/* Class for thread-safe logging */
+class Log {
+public:
+    void execute(std::string);
+    void openlogfile(std::string);
+private:
+    std::mutex m;
+    std::ofstream _logfile;
+};
+
 enum extension {
     HTML,
     JPEG,
@@ -101,6 +101,7 @@ enum extension {
 };
 
 
+void daemon_mode();
 void print_usage(const char *);
 void pr_error(const char *);
 void parse_args(int, char *);
@@ -114,6 +115,7 @@ const char * get_status_as_string(int);
 std::string normalize_path(char const *);
 void build_response_header(http_response &);
 void scheduling_thread();
+void worker_thread(std::queue<http_request *>);
 off_t get_filesize(std::string *);
 extension get_file_extension(const char *);
 void get_file_content(http_request *, http_response &);
