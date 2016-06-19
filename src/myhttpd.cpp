@@ -8,6 +8,7 @@ struct sockaddr_in con_info;
 socklen_t con_socklen = sizeof(con_info);
 Log logging;
 std::queue<http_request *> request_queue;
+std::priority_queue<http_request*, std::vector<http_request*>, compare_size> pq;
 
 /* Turns caller process into daemon */
 void daemon_mode() {
@@ -364,6 +365,28 @@ void scheduling_thread() {
             logging.execute(get_logstring(req, resp));
             close(req->con_fd);
             delete req;
+        }
+        if (!pq.empty()) {
+            struct http_response resp;
+            struct http_request * req = pq.top();
+            pq.pop();
+            switch (get_method_as_int(req->method)) {
+                case HTTP_REQUEST_GET:
+                case HTTP_REQUEST_HEAD:
+                get_file_content(req, resp);
+                break;
+                default:
+                resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
+            }
+            build_response_header(resp);
+            send(con_fd, resp.header.c_str(), strlen(resp.header.c_str()), 0);
+            if (resp.content_length) {
+                send(con_fd, resp.content, resp.content_length, 0);
+                delete [] resp.content;
+            }
+            logging.execute(get_logstring(req, resp));
+            close(req->con_fd);
+            delete req;
             // ----------
 
         }
@@ -408,7 +431,11 @@ int main(int argc, char * argv[]) {
         strcpy(request->http, http);
         strcpy(request->rem_ip, get_ip(&con_info).c_str());
         /* Put request object into the main queue */
-        request_queue.push(request);
+        if (serv_params.fcfs_policy == false){                  //if sjf, place in priority queue
+            pq.push(request);
+        }else {
+        request_queue.push(request);                            //if fcfs, place in normal queue
+        }
     }
 
     scheduler.join();

@@ -100,6 +100,12 @@ enum extension {
     UNKNOWN
 };
 
+/* Helper method to compare the size of file_sizes to be put into the priority queue, pq */
+struct compare_size {
+    bool operator()(const http_request* r1, const http_request* r2) {
+        return r1->f_size >= r2->f_size;
+    }
+};
 
 void daemon_mode();
 void print_usage(const char *);
