@@ -7,10 +7,10 @@ struct addrinfo socket_init_info, *socket_info;
 struct sockaddr_in con_info;
 socklen_t con_socklen = sizeof(con_info);
 Log logging;
-std::queue<http_request *> request_queue;
+std::priority_queue<http_request *, std::vector<http_request *>,
+                    std::function<bool(http_request *, http_request *)>> * request_queue;
 std::mutex mutex_rq;
 std::condition_variable cv_rq;
-
 std::vector<std::mutex *> mutex_wt;
 std::vector<std::condition_variable *> cv_wt;
 std::vector<http_request *> jobs;
@@ -78,8 +78,9 @@ void parse_args(int ac, char * av[]) {
                     {
                         if (++i >= ac) print_usage(exec_name);
                         std::string policy = av[i];
-                        if (policy == "FCFS" || policy == "SJF") {
-                            serv_params.fcfs_policy = (policy == "FCFS") ? true : false;
+                        if (policy == "SJF") {
+                            request_queue = new std::priority_queue<http_request *, std::vector<http_request *>,
+                                                std::function<bool(http_request *, http_request *)>>(compare_size);
                         }
                         else print_usage(exec_name);
                         break;
@@ -98,6 +99,16 @@ void parse_args(int ac, char * av[]) {
 void pr_error(const char * msg) {
     perror(msg);
     exit(1);
+}
+
+/* Helper method to compare timestamps of two requests */
+bool compare_time(http_request * r1, http_request * r2) {
+    return r1->timestamp >= r2->timestamp;
+}
+
+/* Helper method to compare filesizes of two requests */
+bool compare_size(http_request * r1, http_request * r2) {
+    return r1->f_size <= r2->f_size;
 }
 
 void create_socket_open_port() {
@@ -359,11 +370,11 @@ void scheduling_thread() {
         /* Lock mutex */
         std::unique_lock<std::mutex> mql(mutex_rq);
         /* Wait for notification or when queue is not empty */
-        cv_rq.wait(mql, [](){return !request_queue.empty();});
+        cv_rq.wait(mql, [](){return !request_queue->empty();});
         /****************** Critical section ****************/
         /* Get request at the front of the queue and pop it */
-        struct http_request * req = request_queue.front();
-        request_queue.pop();
+        struct http_request * req = request_queue->top();
+        request_queue->pop();
         /****************************************************/
         mql.unlock();
         /* Looking for a waiting thread */
@@ -409,6 +420,8 @@ void worker_thread(int id) {
 
 /* Queuing thread */
 int main(int argc, char * argv[]) {
+    request_queue = new std::priority_queue<http_request *, std::vector<http_request *>,
+                        std::function<bool(http_request *, http_request *)>>(compare_time);
     /* Parsing command line arguments */
     parse_args(argc, argv);
     /* Run as daemon if not in debugging mode */
@@ -447,7 +460,7 @@ int main(int argc, char * argv[]) {
         std::unique_lock<std::mutex> mql(mutex_rq);
         /************* Critical section ***********/
         /* Put request object into the main queue */
-        request_queue.push(request);
+        request_queue->push(request);
         /******************************************/
         mql.unlock();
         /* Notify scheduler thread that there is a new request in the main queue */

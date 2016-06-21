@@ -2,6 +2,7 @@
 #define MYHTTPD_H
 
 #include <condition_variable>
+#include <functional>
 #include <iostream>
 #include <thread>
 #include <sstream>      // string stream
@@ -120,6 +121,8 @@ void worker_thread(int);
 off_t get_filesize(std::string *);
 extension get_file_extension(const char *);
 void get_file_content(http_request *, http_response &);
+bool compare_time(http_request *, http_request *);
+bool compare_size(http_request *, http_request *);
 
 
 #endif
