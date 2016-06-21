@@ -1,6 +1,7 @@
 #ifndef MYHTTPD_H
 #define MYHTTPD_H
 
+#include <condition_variable>
 #include <iostream>
 #include <thread>
 #include <sstream>      // string stream
@@ -31,9 +32,9 @@
 
 /* Limits for 1st line */
 #define HEAD_LINE_LENGTH                    1040
-#define METHOD_LENGTH                       6       // 5 + EOS
-#define PAGE_LENGTH                         1025    // 1024 + EOS
-#define HTTP_LENGTH                         9      // 8 + EOS
+#define METHOD_LENGTH                       6       // 5 + EOL
+#define PAGE_LENGTH                         1025    // 1024 + EOL
+#define HTTP_LENGTH                         9      // 8 + EOL
 
 /* Accepting methods as string */
 #define HTTP_REQUEST_GET_S                  "GET"
@@ -48,7 +49,7 @@
 #define HTTP_STATUS_CODE_BAD_REQUEST        400
 #define HTTP_STATUS_CODE_NOTFOUND           404
 
-/* Status integers as strings */
+/* Status codes as strings */
 #define HTTP_STATUS_CODE_OK_S               "200 OK"
 #define HTTP_STATUS_CODE_BAD_REQUEST_S      "400 Bad Request"
 #define HTTP_STATUS_CODE_NOTFOUND_S         "404 Not Found"
@@ -64,7 +65,7 @@ static struct parameters {
     std::string root_dir = SERVER_DEFAULT_ROOT_DIR;
     int q_time = SERVER_DEFAULT_Q_TIME;
     int threads = SERVER_DEFAULT_N_THREADS;
-    bool fcfs_policy = SERVER_DEFAULT_FCFS;    // SJF if false
+    bool fcfs_policy = SERVER_DEFAULT_FCFS;
 } serv_params;
 
 struct http_request {
@@ -79,8 +80,8 @@ struct http_request {
 struct http_response {
     unsigned int content_length = 0;
     std::string header, content_type;
-    char * content;
-    time_t mod_time;
+    char * content = NULL;
+    time_t mod_time = 0;
     int req_status;
 };
 
@@ -100,12 +101,6 @@ enum extension {
     UNKNOWN
 };
 
-/* Helper method to compare the size of file_sizes to be put into the priority queue, pq */
-struct compare_size {
-    bool operator()(const http_request* r1, const http_request* r2) {
-        return r1->f_size >= r2->f_size;
-    }
-};
 
 void daemon_mode();
 void print_usage(const char *);
@@ -121,7 +116,7 @@ const char * get_status_as_string(int);
 std::string normalize_path(char const *);
 void build_response_header(http_response &);
 void scheduling_thread();
-void worker_thread(std::queue<http_request *>);
+void worker_thread(int);
 off_t get_filesize(std::string *);
 extension get_file_extension(const char *);
 void get_file_content(http_request *, http_response &);

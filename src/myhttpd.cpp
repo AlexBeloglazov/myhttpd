@@ -8,7 +8,13 @@ struct sockaddr_in con_info;
 socklen_t con_socklen = sizeof(con_info);
 Log logging;
 std::queue<http_request *> request_queue;
-std::priority_queue<http_request*, std::vector<http_request*>, compare_size> pq;
+std::mutex mutex_rq;
+std::condition_variable cv_rq;
+
+std::vector<std::mutex *> mutex_wt;
+std::vector<std::condition_variable *> cv_wt;
+std::vector<http_request *> jobs;
+
 
 /* Turns caller process into daemon */
 void daemon_mode() {
@@ -66,7 +72,7 @@ void parse_args(int ac, char * av[]) {
                     break;
                     case 'n':
                     if (++i >= ac) print_usage(exec_name);
-                    serv_params.threads = std::stoi(av[i]);
+                    serv_params.threads = (serv_params.debugging) ? 1 : std::stoi(av[i]);
                     break;
                     case 's':
                     {
@@ -123,11 +129,11 @@ void print_debugging_message() {
                 << get_ip((sockaddr_in *)socket_info->ai_addr) << ":" << serv_params.port << "\n\n";
     int i = 0;
     while (i < serv_params.q_time) {
-        std::cout << "* Queuing time: " << i << "s / " << serv_params.q_time << "s" <<  '\r' << std::flush;
+        std::cout << "* Queuing time: " << i << " s" << '\r' << std::flush;
         sleep(1);
         i++;
     }
-    std::cout << "* Queuing time: " << i << "s / " << serv_params.q_time << "s" << "\n\n";
+    std::cout << "* Queuing time: " << i << " s" << "\n\n";
 }
 
 /*
@@ -250,7 +256,7 @@ void get_file_content(http_request *req, http_response &resp) {
     }
     /* Get stat for a file */
     stat(req->norm_path.c_str(), &f_info);
-    /* If file is a directory then get list of files*/
+    /* If openned file is a directory then get list of files */
     if (S_ISDIR(f_info.st_mode)) {
         if (get_method_as_int(req->method) == HTTP_REQUEST_GET) {
             std::stringstream listing;
@@ -276,7 +282,7 @@ void get_file_content(http_request *req, http_response &resp) {
         resp.mod_time = f_info.st_mtimespec.tv_sec;
     }
     /* Its a file */
-    else if (S_ISREG(f_info.st_mode)){
+    else if (S_ISREG(f_info.st_mode)) {
         switch(get_file_extension(req->norm_path.c_str())){
             case HTML:
                 in_f.open(req->norm_path);
@@ -340,69 +346,76 @@ void Log::execute(std::string log_str) {
 void scheduling_thread() {
     if (serv_params.debugging) print_debugging_message();
     else sleep(serv_params.q_time);
+    std::vector<std::thread> pool;
+    /* Creating pool of threads, respecting condition variables,
+    mutexes and request slots */
+    for (int id=0; id<serv_params.threads; id++) {
+        mutex_wt.push_back(new std::mutex);
+        cv_wt.push_back(new std::condition_variable());
+        jobs.push_back(NULL);
+        pool.push_back(std::thread (worker_thread, id));
+    }
     while (true) {
-        if (!request_queue.empty()) {
-
-            // This will be in a worker thread
-            // ---------
-            struct http_response resp;
-            struct http_request * req = request_queue.front();
-            request_queue.pop();
-            switch (get_method_as_int(req->method)) {
-                case HTTP_REQUEST_GET:
-                case HTTP_REQUEST_HEAD:
-                get_file_content(req, resp);
+        /* Lock mutex */
+        std::unique_lock<std::mutex> mql(mutex_rq);
+        /* Wait for notification or when queue is not empty */
+        cv_rq.wait(mql, [](){return !request_queue.empty();});
+        /****************** Critical section ****************/
+        /* Get request at the front of the queue and pop it */
+        struct http_request * req = request_queue.front();
+        request_queue.pop();
+        /****************************************************/
+        mql.unlock();
+        /* Looking for a waiting thread */
+        for(int i=0;; i = (i+1) % serv_params.threads) {
+            if (jobs[i] == NULL) {
+                jobs[i] = req;
+                cv_wt[i]->notify_one();
                 break;
-                default:
-                resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
             }
-            build_response_header(resp);
-            send(con_fd, resp.header.c_str(), strlen(resp.header.c_str()), 0);
-            if (resp.content_length) {
-                send(con_fd, resp.content, resp.content_length, 0);
-                delete [] resp.content;
-            }
-            logging.execute(get_logstring(req, resp));
-            close(req->con_fd);
-            delete req;
+            /* If all threads are busy sleep for 200us */
+            else if (i == serv_params.threads-1)
+                usleep(200);
         }
-        if (!pq.empty()) {
-            struct http_response resp;
-            struct http_request * req = pq.top();
-            pq.pop();
-            switch (get_method_as_int(req->method)) {
-                case HTTP_REQUEST_GET:
-                case HTTP_REQUEST_HEAD:
-                get_file_content(req, resp);
-                break;
-                default:
-                resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
-            }
-            build_response_header(resp);
-            send(con_fd, resp.header.c_str(), strlen(resp.header.c_str()), 0);
-            if (resp.content_length) {
-                send(con_fd, resp.content, resp.content_length, 0);
-                delete [] resp.content;
-            }
-            logging.execute(get_logstring(req, resp));
-            close(req->con_fd);
-            delete req;
-            // ----------
-
-        }
-        usleep(200);
     }
 }
 
-void worker_thread(std::queue<http_request *> job) {
-    // TODO
+void worker_thread(int id) {
+    while(true) {
+        std::unique_lock<std::mutex> w_locker(*mutex_wt[id]);
+        cv_wt[id]->wait(w_locker, [=](){return jobs[id] != NULL;});
+        struct http_response resp;
+        switch (get_method_as_int(jobs[id]->method)) {
+            case HTTP_REQUEST_GET:
+            case HTTP_REQUEST_HEAD:
+            get_file_content(jobs[id], resp);
+            break;
+            default:
+            resp.req_status = HTTP_STATUS_CODE_BAD_REQUEST;
+        }
+        build_response_header(resp);
+        send(jobs[id]->con_fd, resp.header.c_str(), strlen(resp.header.c_str()), 0);
+        if (resp.content_length) {
+            send(jobs[id]->con_fd, resp.content, resp.content_length, 0);
+            delete [] resp.content;
+            resp.content = NULL;
+        }
+        logging.execute(get_logstring(jobs[id], resp));
+        close(jobs[id]->con_fd);
+        delete jobs[id];
+        jobs[id] = NULL;
+    }
 }
 
 /* Queuing thread */
 int main(int argc, char * argv[]) {
+    /* Parsing command line arguments */
     parse_args(argc, argv);
+    /* Run as daemon if not in debugging mode */
     if (!serv_params.debugging) daemon_mode();
+    /* Changing root directory for the server */
     chdir(serv_params.root_dir.c_str());
+    /* Open logfile if given */
     if (!serv_params.logfile.empty()) {
         try { logging.openlogfile(serv_params.logfile); }
         catch (...) {
@@ -430,16 +443,17 @@ int main(int argc, char * argv[]) {
         strcpy(request->page, page);
         strcpy(request->http, http);
         strcpy(request->rem_ip, get_ip(&con_info).c_str());
+        /* Lock mutex */
+        std::unique_lock<std::mutex> mql(mutex_rq);
+        /************* Critical section ***********/
         /* Put request object into the main queue */
-        if (serv_params.fcfs_policy == false){                  //if sjf, place in priority queue
-            pq.push(request);
-        }else {
-        request_queue.push(request);                            //if fcfs, place in normal queue
-        }
+        request_queue.push(request);
+        /******************************************/
+        mql.unlock();
+        /* Notify scheduler thread that there is a new request in the main queue */
+        cv_rq.notify_one();
     }
-
     scheduler.join();
-
     /* Cleaning up */
     close(socket_fd);
     freeaddrinfo(socket_info);
