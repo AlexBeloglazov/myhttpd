@@ -82,6 +82,7 @@ void parse_args(int ac, char * av[]) {
                             request_queue = new std::priority_queue<http_request *, std::vector<http_request *>,
                                                 std::function<bool(http_request *, http_request *)>>(compare_size);
                         }
+                        else if (policy == "FCFS") {}
                         else print_usage(exec_name);
                         break;
                     }
