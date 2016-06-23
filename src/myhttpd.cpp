@@ -79,6 +79,7 @@ void parse_args(int ac, char * av[]) {
                         if (++i >= ac) print_usage(exec_name);
                         std::string policy = av[i];
                         if (policy == "SJF") {
+                            delete request_queue;
                             request_queue = new std::priority_queue<http_request *, std::vector<http_request *>,
                                                 std::function<bool(http_request *, http_request *)>>(compare_size);
                         }
@@ -109,7 +110,7 @@ bool compare_time(http_request * r1, http_request * r2) {
 
 /* Helper method to compare filesizes of two requests */
 bool compare_size(http_request * r1, http_request * r2) {
-    return r1->f_size <= r2->f_size;
+    return r1->f_size >= r2->f_size;
 }
 
 void create_socket_open_port() {

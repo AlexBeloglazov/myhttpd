@@ -1,11 +1,2 @@
-
-REFERENCES:
-https://beej.us/guide/bgnet/output/html/singlepage/bgnet.html
-http://www.linuxhowtos.org/C_C++/socket.htm
-http://easy-tutorials.net/c/linux-c-socket-programming/
-https://veithen.github.io/2014/01/01/how-tcp-backlog-works-in-linux.html
-https://stackoverflow.com/questions/409087/creating-a-web-server-in-pure-c
-http://www.cplusplus.com/doc/tutorial/files/
-https://stackoverflow.com/questions/18402428/how-to-properly-use-scandir-in-c
-https://stackoverflow.com/questions/11442886/control-multithreaded-flow-with-condition-variable
-http://easy-tutorials.net/c/creating-multi-threaded-c-code/
+To compie open terminal and navigate to myhttpd folder and enter: make
+To run enter: ./myhttpd -h
