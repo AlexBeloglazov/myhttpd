@@ -1,50 +1,41 @@
-a.)	Team Name:	AMM	
-	UBIT: 		50159877, 35717841, 50045420
-	Email: 		abelogla@buffalo.edu, mdtobio@buffalo.edu, mrnorton@buffalo.edu
 
+Used a queue and a priority queue to handle the queuing components of the
+project. A priority queue was used to handle the queuing of jobs, depending on what
+the user selected "FCFS" or "SJF" the queue will sort either by time stamp or by 
+file size. Our scheduler uses a vector of threads to handle the worker thread pool, 
+a vector for the jobs handed out to the worker threads, and another vector for control 
+variables to lock and unlock the unique locks given to each worker thread. The vector 
+of jobs is what allows thread synchronization as each thread has it√ïs own job √îslot√ï 
+within the vector, which it waits to be filled by the scheduler.
 
-b.) 	We used a queue and a priority queue to handle the queuing components of the
-	project. A priority queue was used to handle the queuing of jobs, depending on what
-	the user selected ‘FCFS’ or ’SJF’ the queue will sort either by time stamp or by 
-	file size. Our scheduler uses a vector of threads to handle the worker thread pool, 
-	a vector for the jobs handed out to the worker threads, and another vector for control 
-	variables to lock and unlock the unique locks given to each worker thread. The vector 
-	of jobs is what allows thread synchronization as each thread has it’s own job ‘slot’ 
-	within the vector, which it waits to be filled by the scheduler.
+Context switches are handled through a mutex and control variables. Each thread
+has its own control variable through which the scheduling thread can lock and
+unlock access to critical areas. This system prevents √îbusy waiting√ï of threads that
+would have occurred if a mutex guard system were used by allowing threads to
+work on tasks when other threads were still within scope.
 
-c.) 	Context switches are handled through a mutex and control variables. Each thread
-	has its own control variable through which the scheduling thread can lock and
-	unlock access to critical areas. This system prevents ‘busy waiting’ of threads that
-	would have occurred if a mutex guard system were used by allowing threads to
-	work on tasks when other threads were still within scope.
+To avoid any race conditions in the code the mutex type unique_lock has been implemented.
+The unique lock manages the mutex object we have implemented with 
+both the lock and unlock states upon the construction or by move-assigning to the 
+lock. Furthermore, with the use of conditional variables there can be access to 
+other threads in this queue without interfering with one another.
 
-
-
-d.)	To avoid any race conditions in our code we decided to implement the mutex type 
-	unique_lock. The unique lock manages the mutex object we have implemented with 
-	both the lock and unlock states upon the construction or by move-assigning to the 
-	lock. Furthermore, with the use of conditional variables there can be access to 
-	other threads in this queue without interfering with one another.
-
-
-
-e.)	Just like any program design there are always going to be advantages and disadvantages
-	when looking at the overall scope of it. One advantage to our code is the use of only 
-	a single queue, but a single queue that is reliant upon the policy type. Once we 
-	determine what the policy type is, then we can determine how to schedule the jobs. If the 
-	policy type is FCFS then the scheduler will look at the timestamp of when the job 
-	request came in and if it is SJF the scheduler will look at file size. In the code we 
-	have, much of the advantages lie within the use of the mutex type chosen. By using the 
-	unique_lock we are able to avoid race conditions as mentioned above. However, in 
-	comparison to say a lock_guard, we avoid more busy waiting, if any, and this allows the 
-	threads to be accessed concurrently as opposed to waiting for control of said lock to 
-	leave the scope. On the other hand, the code does have its disadvantages. If all threads 
-	are busy, then the scheduler is stuck busy-waiting using cpu until another opens up for 
-	use.
+Just like any program design there are always going to be advantages and disadvantages
+when looking at the overall scope of it. One advantage to the code is the use of only 
+a single queue, but a single queue that is reliant upon the policy type. Once we 
+determine what the policy type is, then we can determine how to schedule the jobs. If the 
+policy type is FCFS then the scheduler will look at the timestamp of when the job 
+request came in and if it is SJF the scheduler will look at file size. By using the 
+unique_lock we are able to avoid race conditions as mentioned above. However, in 
+comparison to say a lock_guard, we avoid more busy waiting, if any, and this allows the 
+threads to be accessed concurrently as opposed to waiting for control of said lock to 
+leave the scope. On the other hand, the code does have its disadvantages. If all threads 
+are busy, then the scheduler is stuck busy-waiting using cpu until another opens up for 
+use.
 
 
 
-f.)	REFERENCES:
+REFERENCES:
 
 	https://beej.us/guide/bgnet/output/html/singlepage/bgnet.html
 	http://www.linuxhowtos.org/C_C++/socket.htm
